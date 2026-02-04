@@ -6,14 +6,16 @@ The CraneDNS API allows you to programmatically manage DNS records for your doma
 
 - [Authentication](#authentication)
 - [Endpoint](#endpoint)
+- [Request Format](#request-format)
 - [Response Format](#response-format)
 - [HTTP Status Codes](#http-status-codes)
-- [API Methods](#api-methods)
-  - [List Records](#list-records)
-  - [Create Record](#create-record)
-  - [Update Record](#update-record)
-  - [Delete Record](#delete-record)
-  - [DDNS Update](#ddns-update)
+- [Record IDs](#record-ids)
+- [API Actions](#api-actions)
+  - [dns.list](#dnslist)
+  - [dns.create](#dnscreate)
+  - [dns.update](#dnsupdate)
+  - [dns.delete](#dnsdelete)
+  - [dns.ddns](#dnsddns)
 - [Record Type Formats](#record-type-formats)
 - [Code Examples](#code-examples)
 - [Error Reference](#error-reference)
@@ -23,11 +25,19 @@ The CraneDNS API allows you to programmatically manage DNS records for your doma
 
 ## Authentication
 
-All API requests require authentication via the `X-API-Key` header. Generate an API key from the DNS management page in your client area by expanding the **API Access** section.
+All API requests require authentication via one of these headers:
 
 ```
-X-API-Key: your-64-character-api-key
+Authorization: Bearer YOUR_API_KEY
 ```
+
+Or:
+
+```
+X-Api-Key: YOUR_API_KEY
+```
+
+Generate an API key from the client area. Keys can be configured with IP whitelists, domain restrictions, and read-only or read+write access.
 
 ---
 
@@ -36,10 +46,23 @@ X-API-Key: your-64-character-api-key
 All requests use a single endpoint:
 
 ```
-https://namecrane.org/index.php?m=cranedns&action=api&method=METHOD_NAME
+POST https://namecrane.org/index.php?m=craneapi
 ```
 
-Replace `METHOD_NAME` with: `list`, `create`, `update`, `delete`, or `ddns`.
+The action, domain, and parameters are all specified in the JSON request body.
+
+---
+
+## Request Format
+
+Send a `POST` request with a JSON body. Every request must include an `action` and (for DNS actions) a `domain`:
+
+```json
+{
+    "action": "dns.list",
+    "domain": "namecrane.org"
+}
+```
 
 ---
 
@@ -52,7 +75,8 @@ All responses are JSON.
 ```json
 {
     "success": true,
-    "message": "Operation completed"
+    "message": "Operation completed",
+    "code": 200
 }
 ```
 
@@ -61,7 +85,8 @@ All responses are JSON.
 ```json
 {
     "success": false,
-    "error": "Error description"
+    "error": "Error description",
+    "code": 400
 }
 ```
 
@@ -74,34 +99,48 @@ All responses are JSON.
 | 200 | Success |
 | 400 | Invalid request or parameters |
 | 401 | Invalid or disabled API key |
-| 403 | Record type not allowed |
+| 403 | Forbidden (IP not whitelisted, domain not authorized, or insufficient access level) |
+| 404 | Record or domain not found |
 | 500 | Server error |
 
 ---
 
-## API Methods
+## Record IDs
 
-### List Records
+Every DNS record has a unique ID (UUID). This ID is stable and does not change when the record's content, TTL, or other fields are updated.
 
-Retrieve all DNS records for your domain.
+- `dns.list` returns the `id` for each record
+- `dns.create` returns the `id` of the newly created record
+- `dns.update` and `dns.delete` require the record `id`
+- `dns.ddns` is name-based and does not require an `id`, but returns one in the response
 
-**Request:**
+Use the record `id` for all update and delete operations instead of identifying records by name, type, and content.
 
-```http
-GET /index.php?m=cranedns&action=api&method=list
-```
+---
 
-**Query Parameters:**
+## API Actions
+
+### dns.list
+
+Retrieve all DNS records for a domain, optionally filtered by type or fetched by ID.
+
+**Access:** Read
+
+**Parameters:**
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
+| `domain` | string | Yes | Domain name |
 | `type` | string | No | Filter by record type (e.g., `A`, `AAAA`, `CNAME`) |
+| `id` | string | No | Fetch a single record by its UUID |
 
-**Example:**
+**Example — list all records:**
 
 ```bash
-curl -H "X-API-Key: your-api-key" \
-  "https://namecrane.org/index.php?m=cranedns&action=api&method=list"
+curl -X POST "https://namecrane.org/index.php?m=craneapi" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"action": "dns.list", "domain": "namecrane.org"}'
 ```
 
 **Response:**
@@ -111,46 +150,53 @@ curl -H "X-API-Key: your-api-key" \
     "success": true,
     "records": [
         {
+            "id": "550e8400-e29b-41d4-a716-446655440000",
             "name": "@",
             "type": "A",
             "content": "192.168.1.1",
             "ttl": 3600
         },
         {
+            "id": "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
             "name": "www",
             "type": "CNAME",
             "content": "namecrane.org.",
             "ttl": 3600
         },
         {
+            "id": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
             "name": "@",
             "type": "MX",
             "content": "10 mail.namecrane.org.",
             "ttl": 3600
         }
-    ]
+    ],
+    "code": 200
 }
 ```
 
-> See [`examples/list-records.sh`](examples/list-records.sh) for more examples.
+**Example — get a single record by ID:**
+
+```bash
+curl -X POST "https://namecrane.org/index.php?m=craneapi" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"action": "dns.list", "domain": "namecrane.org", "id": "550e8400-e29b-41d4-a716-446655440000"}'
+```
 
 ---
 
-### Create Record
+### dns.create
 
-Add a new DNS record.
+Add a new DNS record. Returns the new record's ID.
 
-**Request:**
+**Access:** Write
 
-```http
-POST /index.php?m=cranedns&action=api&method=create
-Content-Type: application/json
-```
-
-**Body Parameters:**
+**Parameters:**
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
+| `domain` | string | Yes | Domain name |
 | `name` | string | Yes | Record name (`@` for root, or subdomain) |
 | `type` | string | Yes | Record type (`A`, `AAAA`, `CNAME`, `MX`, `TXT`, etc.) |
 | `content` | string | Yes | Record value |
@@ -159,11 +205,10 @@ Content-Type: application/json
 **Example:**
 
 ```bash
-curl -X POST \
-  -H "X-API-Key: your-api-key" \
+curl -X POST "https://namecrane.org/index.php?m=craneapi" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"name": "www", "type": "A", "content": "192.168.1.1", "ttl": 3600}' \
-  "https://namecrane.org/index.php?m=cranedns&action=api&method=create"
+  -d '{"action": "dns.create", "domain": "namecrane.org", "name": "www", "type": "A", "content": "192.168.1.1", "ttl": 3600}'
 ```
 
 **Response:**
@@ -171,58 +216,54 @@ curl -X POST \
 ```json
 {
     "success": true,
-    "message": "Record created"
+    "message": "Record created",
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "code": 200
 }
 ```
-
-**Error Response:**
-
-```json
-{
-    "success": false,
-    "error": "Invalid IPv4 address format"
-}
-```
-
-> See [`examples/create-record.sh`](examples/create-record.sh) for more examples.
 
 ---
 
-### Update Record
+### dns.update
 
-Modify an existing DNS record.
+Modify an existing DNS record by its ID. Only the fields you include will be changed — omitted fields keep their current values.
 
-**Request:**
+**Access:** Write
 
-```http
-POST /index.php?m=cranedns&action=api&method=update
-Content-Type: application/json
-```
-
-**Body Parameters:**
+**Parameters:**
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `name` | string | Yes | Record name |
-| `type` | string | Yes | Record type |
-| `old_content` | string | Yes | Current record value (identifies the record) |
-| `content` | string | Yes | New record value |
-| `ttl` | integer | No | New TTL in seconds (default: `3600`) |
+| `domain` | string | Yes | Domain name |
+| `id` | string | Yes | Record UUID (from `dns.list` or `dns.create`) |
+| `name` | string | No | New record name |
+| `type` | string | No | New record type |
+| `content` | string | No | New record value |
+| `ttl` | integer | No | New TTL in seconds |
 
-**Example:**
+**Example — update content only:**
 
 ```bash
-curl -X POST \
-  -H "X-API-Key: your-api-key" \
+curl -X POST "https://namecrane.org/index.php?m=craneapi" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"action": "dns.update", "domain": "namecrane.org", "id": "550e8400-e29b-41d4-a716-446655440000", "content": "192.168.1.100"}'
+```
+
+**Example — update multiple fields:**
+
+```bash
+curl -X POST "https://namecrane.org/index.php?m=craneapi" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "name": "www",
-    "type": "A",
-    "old_content": "192.168.1.1",
-    "content": "192.168.1.100",
-    "ttl": 3600
-  }' \
-  "https://namecrane.org/index.php?m=cranedns&action=api&method=update"
+    "action": "dns.update",
+    "domain": "namecrane.org",
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "name": "mail",
+    "content": "10.0.0.1",
+    "ttl": 300
+  }'
 ```
 
 **Response:**
@@ -230,50 +271,33 @@ curl -X POST \
 ```json
 {
     "success": true,
-    "message": "Record updated"
+    "message": "Record updated",
+    "code": 200
 }
 ```
-
-**Error Response:**
-
-```json
-{
-    "success": false,
-    "error": "name, type, old_content, and content are required"
-}
-```
-
-> See [`examples/update-record.sh`](examples/update-record.sh) for more examples.
 
 ---
 
-### Delete Record
+### dns.delete
 
-Remove a DNS record.
+Remove a DNS record by its ID.
 
-**Request:**
+**Access:** Write
 
-```http
-POST /index.php?m=cranedns&action=api&method=delete
-Content-Type: application/json
-```
-
-**Body Parameters:**
+**Parameters:**
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `name` | string | Yes | Record name |
-| `type` | string | Yes | Record type |
-| `content` | string | Yes | Record value (identifies the record) |
+| `domain` | string | Yes | Domain name |
+| `id` | string | Yes | Record UUID (from `dns.list` or `dns.create`) |
 
 **Example:**
 
 ```bash
-curl -X POST \
-  -H "X-API-Key: your-api-key" \
+curl -X POST "https://namecrane.org/index.php?m=craneapi" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"name": "www", "type": "A", "content": "192.168.1.1"}' \
-  "https://namecrane.org/index.php?m=cranedns&action=api&method=delete"
+  -d '{"action": "dns.delete", "domain": "namecrane.org", "id": "550e8400-e29b-41d4-a716-446655440000"}'
 ```
 
 **Response:**
@@ -281,45 +305,39 @@ curl -X POST \
 ```json
 {
     "success": true,
-    "message": "Record deleted"
+    "message": "Record deleted",
+    "code": 200
 }
 ```
-
-**Error Response:**
-
-```json
-{
-    "success": false,
-    "error": "name, type, and content are required"
-}
-```
-
-> See [`examples/delete-record.sh`](examples/delete-record.sh) for more examples.
 
 ---
 
-### DDNS Update
+### dns.ddns
 
 Update an A or AAAA record with the client's current IP address. Ideal for dynamic DNS scenarios.
 
-**Request:**
+Unlike other actions, DDNS is **name-based** — it does not require a record ID. If a matching record exists, it is updated. If not, one is created. The record ID is returned in the response.
 
-```http
-GET /index.php?m=cranedns&action=api&method=ddns&name=RECORD_NAME
-```
+If no `ip` is provided, the API automatically uses the requesting client's IP address.
 
-**Query Parameters:**
+**Access:** Write
+
+**Parameters:**
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
+| `domain` | string | Yes | Domain name |
 | `name` | string | Yes | Record name to update (e.g., `home`, `office`) |
 | `type` | string | No | `A` (default) or `AAAA` |
+| `ip` | string | No | IP address (auto-detected from client if omitted) |
 
 **Example:**
 
 ```bash
-curl -H "X-API-Key: your-api-key" \
-  "https://namecrane.org/index.php?m=cranedns&action=api&method=ddns&name=home"
+curl -X POST "https://namecrane.org/index.php?m=craneapi" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"action": "dns.ddns", "domain": "namecrane.org", "name": "home"}'
 ```
 
 **Response:**
@@ -328,29 +346,13 @@ curl -H "X-API-Key: your-api-key" \
 {
     "success": true,
     "message": "DDNS updated",
+    "id": "550e8400-e29b-41d4-a716-446655440000",
     "name": "home",
     "type": "A",
-    "content": "203.0.113.45"
+    "content": "203.0.113.45",
+    "code": 200
 }
 ```
-
-**Error Responses:**
-
-```json
-{
-    "success": false,
-    "error": "name parameter is required"
-}
-```
-
-```json
-{
-    "success": false,
-    "error": "Could not detect a valid IPv6 address"
-}
-```
-
-> See [`examples/ddns-update.sh`](examples/ddns-update.sh) and [`examples/ddns-cron.sh`](examples/ddns-cron.sh) for more examples.
 
 ---
 
@@ -373,61 +375,190 @@ curl -H "X-API-Key: your-api-key" \
 
 ## Code Examples
 
-Complete working examples in multiple languages are available in the [`examples/`](examples/) folder:
-
-| File | Description |
-|------|-------------|
-| [`list-records.sh`](examples/list-records.sh) | List records with cURL |
-| [`create-record.sh`](examples/create-record.sh) | Create records with cURL |
-| [`update-record.sh`](examples/update-record.sh) | Update records with cURL |
-| [`delete-record.sh`](examples/delete-record.sh) | Delete records with cURL |
-| [`ddns-update.sh`](examples/ddns-update.sh) | DDNS update with cURL |
-| [`ddns-cron.sh`](examples/ddns-cron.sh) | DDNS cron script for automated updates |
-| [`cranedns-api.py`](examples/cranedns-api.py) | Python client with all methods |
-| [`cranedns-api.php`](examples/cranedns-api.php) | PHP client with all methods |
-| [`cranedns-api.ps1`](examples/cranedns-api.ps1) | PowerShell client with all methods |
-
-### Quick Start
-
-**cURL:**
+### cURL
 
 ```bash
-# List records
-curl -H "X-API-Key: your-api-key" \
-  "https://namecrane.org/index.php?m=cranedns&action=api&method=list"
+# List all records
+curl -X POST "https://namecrane.org/index.php?m=craneapi" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"action": "dns.list", "domain": "namecrane.org"}'
+
+# Create a record
+curl -X POST "https://namecrane.org/index.php?m=craneapi" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"action": "dns.create", "domain": "namecrane.org", "name": "www", "type": "A", "content": "192.168.1.1"}'
+
+# Update by ID
+curl -X POST "https://namecrane.org/index.php?m=craneapi" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"action": "dns.update", "domain": "namecrane.org", "id": "550e8400-...", "content": "192.168.1.100"}'
+
+# Delete by ID
+curl -X POST "https://namecrane.org/index.php?m=craneapi" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"action": "dns.delete", "domain": "namecrane.org", "id": "550e8400-..."}'
+
+# DDNS update (auto-detects IP)
+curl -X POST "https://namecrane.org/index.php?m=craneapi" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"action": "dns.ddns", "domain": "namecrane.org", "name": "home"}'
 ```
 
-**Python:**
+### Python
 
 ```python
 import requests
 
-response = requests.get(
-    "https://namecrane.org/index.php",
-    params={"m": "cranedns", "action": "api", "method": "list"},
-    headers={"X-API-Key": "your-api-key"}
-)
-print(response.json())
+URL = "https://namecrane.org/index.php?m=craneapi"
+HEADERS = {
+    "Authorization": "Bearer YOUR_API_KEY",
+    "Content-Type": "application/json",
+}
+
+# List records
+resp = requests.post(URL, headers=HEADERS, json={
+    "action": "dns.list",
+    "domain": "namecrane.org",
+})
+records = resp.json()["records"]
+
+# Create a record
+resp = requests.post(URL, headers=HEADERS, json={
+    "action": "dns.create",
+    "domain": "namecrane.org",
+    "name": "www",
+    "type": "A",
+    "content": "192.168.1.1",
+    "ttl": 3600,
+})
+record_id = resp.json()["id"]
+
+# Update by ID
+requests.post(URL, headers=HEADERS, json={
+    "action": "dns.update",
+    "domain": "namecrane.org",
+    "id": record_id,
+    "content": "192.168.1.100",
+})
+
+# Delete by ID
+requests.post(URL, headers=HEADERS, json={
+    "action": "dns.delete",
+    "domain": "namecrane.org",
+    "id": record_id,
+})
 ```
 
-**PHP:**
+### PHP
 
 ```php
-$ch = curl_init('https://namecrane.org/index.php?m=cranedns&action=api&method=list');
-curl_setopt_array($ch, [
-    CURLOPT_RETURNTRANSFER => true,
-    CURLOPT_HTTPHEADER => ['X-API-Key: your-api-key']
+$url = 'https://namecrane.org/index.php?m=craneapi';
+$apiKey = 'YOUR_API_KEY';
+$headers = [
+    'Authorization: Bearer ' . $apiKey,
+    'Content-Type: application/json',
+];
+
+function craneapi(string $url, array $headers, array $body): array {
+    $ch = curl_init($url);
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_POST => true,
+        CURLOPT_HTTPHEADER => $headers,
+        CURLOPT_POSTFIELDS => json_encode($body),
+    ]);
+    $result = json_decode(curl_exec($ch), true);
+    curl_close($ch);
+    return $result;
+}
+
+// List records
+$records = craneapi($url, $headers, [
+    'action' => 'dns.list',
+    'domain' => 'namecrane.org',
 ]);
-$response = json_decode(curl_exec($ch), true);
-print_r($response);
+
+// Create a record
+$result = craneapi($url, $headers, [
+    'action' => 'dns.create',
+    'domain' => 'namecrane.org',
+    'name' => 'www',
+    'type' => 'A',
+    'content' => '192.168.1.1',
+    'ttl' => 3600,
+]);
+$recordId = $result['id'];
+
+// Update by ID
+craneapi($url, $headers, [
+    'action' => 'dns.update',
+    'domain' => 'namecrane.org',
+    'id' => $recordId,
+    'content' => '192.168.1.100',
+]);
+
+// Delete by ID
+craneapi($url, $headers, [
+    'action' => 'dns.delete',
+    'domain' => 'namecrane.org',
+    'id' => $recordId,
+]);
 ```
 
-**PowerShell:**
+### PowerShell
 
 ```powershell
-$response = Invoke-RestMethod -Uri "https://namecrane.org/index.php?m=cranedns&action=api&method=list" `
-    -Headers @{"X-API-Key" = "your-api-key"}
-$response | ConvertTo-Json
+$url = "https://namecrane.org/index.php?m=craneapi"
+$headers = @{ "Authorization" = "Bearer YOUR_API_KEY" }
+
+# List records
+$resp = Invoke-RestMethod -Uri $url -Method Post -Headers $headers `
+    -ContentType "application/json" `
+    -Body (@{action = "dns.list"; domain = "namecrane.org"} | ConvertTo-Json)
+
+# Create a record
+$body = @{
+    action = "dns.create"; domain = "namecrane.org"
+    name = "www"; type = "A"; content = "192.168.1.1"; ttl = 3600
+} | ConvertTo-Json
+$result = Invoke-RestMethod -Uri $url -Method Post -Headers $headers `
+    -ContentType "application/json" -Body $body
+$recordId = $result.id
+
+# Update by ID
+$body = @{
+    action = "dns.update"; domain = "namecrane.org"
+    id = $recordId; content = "192.168.1.100"
+} | ConvertTo-Json
+Invoke-RestMethod -Uri $url -Method Post -Headers $headers `
+    -ContentType "application/json" -Body $body
+
+# Delete by ID
+$body = @{
+    action = "dns.delete"; domain = "namecrane.org"
+    id = $recordId
+} | ConvertTo-Json
+Invoke-RestMethod -Uri $url -Method Post -Headers $headers `
+    -ContentType "application/json" -Body $body
+```
+
+### DDNS Cron Script
+
+```bash
+#!/bin/bash
+# Add to crontab: */5 * * * * /path/to/ddns.sh
+API_KEY="YOUR_API_KEY"
+URL="https://namecrane.org/index.php?m=craneapi"
+
+curl -s -X POST "$URL" \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"action": "dns.ddns", "domain": "namecrane.org", "name": "home"}' | jq .
 ```
 
 ---
@@ -436,25 +567,37 @@ $response | ConvertTo-Json
 
 | Error Message | Cause | Solution |
 |--------------|-------|----------|
-| `X-API-Key header is required` | Missing authentication | Add `X-API-Key` header |
-| `Invalid API key` | Key doesn't exist or malformed | Verify your 64-character key |
-| `API key is disabled` | Key disabled in client area | Re-enable in DNS management |
-| `name, type, and content are required` | Missing required parameters | Include all required fields |
-| `name, type, old_content, and content are required` | Missing update parameters | Include old_content for updates |
-| `Record type X is not allowed` | Type not permitted | Use an allowed record type |
+| `API key is required` | Missing authentication header | Add `Authorization` or `X-Api-Key` header |
+| `Invalid API key` | Key doesn't exist or malformed | Verify your API key |
+| `API key is disabled` | Key disabled in client area | Re-enable in client area |
+| `IP not authorized` | Client IP not in key's whitelist | Add your IP to the key's whitelist |
+| `Domain not authorized for this key` | Key has domain restrictions | Add the domain to the key's allowed list |
+| `Read-only key` | Key lacks write access | Use a read+write key for mutations |
+| `Record ID is required` | Missing `id` for update/delete | Include the record `id` |
+| `Record not found` | ID doesn't match any record | Verify the UUID via `dns.list` |
+| `name, type, and content are required` | Missing required create parameters | Include all required fields |
+| `Record type X is not allowed` | Type not permitted by server | Use an allowed record type |
 | `Invalid IPv4 address format` | Content format mismatch | Check content matches type format |
 | `Could not detect a valid IPv6 address` | DDNS type mismatch | Use correct IP version for request |
 | `DDNS only supports A and AAAA record types` | Invalid DDNS type | Use `type=A` or `type=AAAA` |
-| `Unknown method` | Invalid method parameter | Use: list, create, update, delete, ddns |
+| `Unknown action` | Invalid action name | Use: dns.list, dns.create, dns.update, dns.delete, dns.ddns |
 
 ---
 
-## Best Practices
+## Security Best Practices
 
 1. **Keep your API key secret** — Never commit to version control or share publicly. Use environment variables.
 
-2. **Regenerate if compromised** — If exposed, regenerate immediately from the client area.
+2. **Use HTTPS** — Always use HTTPS to encrypt requests and protect your API key.
 
-3. **Disable when not needed** — Disable the key without deleting if you temporarily don't need API access.
+3. **Restrict by IP** — Configure an IP whitelist on your API key to limit access to known addresses.
 
-4. **Use low TTL for DDNS** — Use 300 seconds or less so IP changes propagate quickly.
+4. **Restrict by domain** — If a key only needs to manage specific domains, configure domain restrictions.
+
+5. **Use read-only keys** — If you only need to read records (e.g., monitoring), use a read-only key.
+
+6. **Regenerate if compromised** — If exposed, delete the key and create a new one immediately.
+
+7. **Use low TTL for DDNS** — Use 300 seconds or less so IP changes propagate quickly.
+
+8. **Monitor usage** — Check "Last Used" timestamp in client area to detect unauthorized access.
