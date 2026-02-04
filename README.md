@@ -1,4 +1,4 @@
-# CraneDNS API Documentation (DEVELOPMENT BETA)
+# CraneDNS API Documentation (DEVELOPEMENT)
 
 The CraneDNS API allows you to programmatically manage DNS records for your domains.
 
@@ -11,6 +11,7 @@ The CraneDNS API allows you to programmatically manage DNS records for your doma
 - [HTTP Status Codes](#http-status-codes)
 - [Record IDs](#record-ids)
 - [API Actions](#api-actions)
+  - [dns.list_zones](#dnslist_zones)
   - [dns.list](#dnslist)
   - [dns.create](#dnscreate)
   - [dns.update](#dnsupdate)
@@ -119,6 +120,51 @@ Use the record `id` for all update and delete operations instead of identifying 
 ---
 
 ## API Actions
+
+### dns.list_zones
+
+List all domains/zones accessible to the authenticated API key.
+
+This is the only DNS action that does not require a `domain` parameter. Use it to discover which domains you can manage before calling other actions.
+
+**Access:** Read
+
+**Parameters:**
+
+None required.
+
+**Example:**
+
+```bash
+curl -X POST "https://namecrane.org/index.php?m=craneapi" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"action": "dns.list_zones"}'
+```
+
+**Response:**
+
+```json
+{
+    "success": true,
+    "zones": [
+        {"domain": "namecrane.org", "status": "active"},
+        {"domain": "example.com", "status": "available"}
+    ],
+    "code": 200
+}
+```
+
+**Zone Status:**
+
+| Status | Meaning |
+|--------|---------|
+| `active` | Zone exists in DNS — you can list and manage records |
+| `available` | Domain is owned but no DNS zone yet — creating a record will initialize the zone |
+
+If the API key has domain restrictions, only the allowed domains are returned.
+
+---
 
 ### dns.list
 
@@ -378,6 +424,12 @@ curl -X POST "https://namecrane.org/index.php?m=craneapi" \
 ### cURL
 
 ```bash
+# List all zones
+curl -X POST "https://namecrane.org/index.php?m=craneapi" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"action": "dns.list_zones"}'
+
 # List all records
 curl -X POST "https://namecrane.org/index.php?m=craneapi" \
   -H "Authorization: Bearer YOUR_API_KEY" \
